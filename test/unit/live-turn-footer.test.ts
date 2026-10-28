@@ -31,6 +31,12 @@ vi.mock("@getpaseo/plugin/client/react-native", async () => {
     useRevealedText: (text: string) => text, copyText: runtime.copyText,
     useToast: () => ({ show() {}, error() {} }) };
 });
+// The host injects this module's implementations; the fork test swaps the menu
+// in through a getter, which the footer's per-render read follows.
+const forkHost = vi.hoisted(() => ({ ForkMenu: null as React.ComponentType | null }));
+vi.mock("@getpaseo/plugin/client/ui", () => ({
+  get ForkMenu() { return forkHost.ForkMenu ?? undefined; },
+}));
 vi.mock("../../client/components/hub-live", () => ({ TimelineTailHub: () => null }));
 vi.mock("../../client/state/preference-sync-slot", () => ({ PreferenceSyncSlot: () => null }));
 vi.mock("../../client/components/selection-actions", () => ({ useSelectionActions: () => {} }));
@@ -52,7 +58,7 @@ const theme = { colors: { surface0: "#fff", surface1: "#eee", surface2: "#ddd", 
 const catalog: PaseoProviderModelsResult = { provider: "codex", fetchedAt: "now", requestId: "r",
   models: [{ provider: "codex", id: "sol", label: "GPT-6.1-Sol", thinkingOptions: [{ id: "medium", label: "Medium" }] }] };
 
-beforeEach(() => { vi.clearAllMocks(); runtime.agent.status = "idle"; });
+beforeEach(() => { vi.clearAllMocks(); runtime.agent.status = "idle"; forkHost.ForkMenu = null; });
 afterEach(() => { expect(runtime.listeners.size).toBe(0); });
 
 describe.each(["web", "ios"] as const)("completed-turn toolbar on %s", (platform) => {
@@ -269,5 +275,49 @@ describe.each(["web", "ios"] as const)("completed-turn toolbar on %s", (platform
       act(() => renderer.unmount());
     }
     expect(release).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("host fork menu", () => {
+  const renderCompletedRow = async () => {
+    const refetch = vi.fn<PaseoAgentTimelineHandle["refetch"]>(async () => page([
+      entry({ type: "user_message", text: "prompt" }, 1, 1000, "one"),
+      entry({ type: "assistant_message", text: "answer" }, 2, 2000, "one"),
+    ]));
+    const release = Object.assign(vi.fn(), { ready: Promise.resolve(), subscriptionId: "s", release: async () => {} });
+    runtime.api = { agents: { ref: () => ({ timeline: { refetch, subscribe: () => release } }) },
+      providers: { listModels: async () => catalog } };
+    let renderer!: ReturnType<typeof TestRenderer.create>;
+    await act(async () => {
+      renderer = TestRenderer.create(React.createElement(LiveAssistantRenderer, {
+        agentId: "fork", theme, host: { id: "local", label: "Local" }, layout: { platform: "web", compact: false },
+        timestamp: new Date(2000), item: { type: "plugin", kind: "omp-assistant", version: 1,
+          data: { text: "answer", phase: "complete" } },
+      } satisfies PluginTimelineItemProps<LiveAssistantPayload>));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    return { renderer, refetch };
+  };
+
+  it("renders the host's fork menu beside copy when the host supplies one", async () => {
+    forkHost.ForkMenu = (props: Record<string, unknown>) =>
+      React.createElement("View", { ...props, testID: "host-fork-menu" });
+    const { renderer } = await renderCompletedRow();
+    try {
+      const footer = renderer.root.findByType(AssistantFooter);
+      expect(footer.findByProps({ testID: "host-fork-menu" })).toBeTruthy();
+      // The row keeps copy, model and clock beside the fork trigger.
+      expect(footer.findByProps({ accessibilityLabel: "Copy reply" })).toBeTruthy();
+      expect(footer.findByProps({ accessibilityLabel: "Copy model name" })).toBeTruthy();
+    } finally { act(() => renderer.unmount()); }
+  });
+
+  it("draws no fork trigger on a host without the export", async () => {
+    const { renderer } = await renderCompletedRow();
+    try {
+      const footer = renderer.root.findByType(AssistantFooter);
+      expect(footer.findAllByProps({ testID: "host-fork-menu" })).toHaveLength(0);
+      expect(footer.findByProps({ accessibilityLabel: "Copy reply" })).toBeTruthy();
+    } finally { act(() => renderer.unmount()); }
   });
 });

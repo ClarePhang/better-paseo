@@ -1,6 +1,7 @@
-import React, { useCallback, useMemo, useRef, useState, type RefObject } from "react";
+import React, { useCallback, useMemo, useRef, useState, type ComponentType, type RefObject } from "react";
 import { View, Text, Pressable, StyleSheet, type LayoutChangeEvent } from "react-native";
 import { Icon } from "@getpaseo/plugin/client/react-native";
+import * as PluginUi from "@getpaseo/plugin/client/ui";
 import { unselectable } from "./selection";
 import { radiusV2, space } from "./theme-tokens";
 import { useCopy } from "../ui/use-copy";
@@ -26,11 +27,25 @@ import { toolbarLabel } from "../i18n/toolbar-strings";
  * `kind: "plugin"` (`plugins/timeline/projection.ts:96`), so once this plugin
  * renders the reply the host finds no assistant and draws no footer.
  *
- * This is the part a plugin can rebuild. Fork is not: it needs the daemon
- * client and a timeline cursor (`hooks/use-fork-agent.ts`), and the plugin SDK
- * exposes neither. Turning "Assistant markdown" off in settings hands the reply
- * back to the host, which brings the full footer with it.
+ * This is the part a plugin can rebuild. Fork is host workflow — the daemon's
+ * fork context, draft workspaces and navigation — so the plugin renders the
+ * host's own `ForkMenu` (`getpaseo/paseo#7462`): the host pins the boundary to
+ * the original assistant message and runs its draft flow, and the component
+ * renders nothing on a host that does not ship it yet, or under an ineligible
+ * row. Until the host ships it, turning "Assistant markdown" off hands the
+ * reply back to the host, which brings the full footer with it.
  */
+
+/** The host's Fork menu, present once a host ships getpaseo/paseo#7462. */
+interface HostForkMenuProps {
+  testID?: string;
+}
+
+/** SDK 0.13 typings predate the export; the host injects the real module. */
+type HostUiModule = typeof PluginUi & { ForkMenu?: ComponentType<HostForkMenuProps> };
+
+const hostUi = PluginUi as HostUiModule;
+
 interface AssistantFooterProps {
   /** The reply, copied verbatim — the same text the host would copy. */
   text: string;
@@ -71,6 +86,10 @@ export function AssistantFooter({ text, at, agentName, modelId, modelName, think
   const visibleDurationMs = (agentName === "grok" || agentName === "cursor") && durationMs != null &&
     durationMs < REPLAY_COLLAPSE_MS ? null : durationMs;
   const { fit, measure } = useOneLineFit(compact, Boolean(modelName), visibleDurationMs != null);
+  // The host's Fork for this turn. Read per render: the injected UI module is
+  // a plain namespace, so a host without the export answers undefined and the
+  // footer draws none.
+  const ForkMenu = typeof hostUi.ForkMenu === "function" ? hostUi.ForkMenu : undefined;
   const details = <FooterDetails agentName={agentName} modelId={modelId} modelName={modelName} thinkingLabel={thinkingLabel}
     startedAt={startedAt} completedAt={at.getTime()} durationMs={visibleDurationMs} usage={usage} tokens={tokens} />;
   const copyModel = useCallback(() => {
@@ -159,6 +178,14 @@ export function AssistantFooter({ text, at, agentName, modelId, modelName, think
           />
           <Text style={styles.copyLabel}>{toolbarLabel("Copy", language)}</Text>
         </ToolbarItem>
+        {ForkMenu ? (
+          // The host owns the whole workflow: eligibility, the original
+          // assistant's boundary, the draft and its navigation. The menu draws
+          // nothing itself on an ineligible row or a host without the export.
+          <View onLayout={compact ? measure.fork : undefined}>
+            <ForkMenu />
+          </View>
+        ) : null}
         {modelName && fit.model ? (
           <ToolbarItem
             onLayout={compact ? measure.model : undefined}
@@ -215,13 +242,13 @@ const FOOTER_HEIGHT = 24;
 /** A replayed Grok or Cursor turn spans under this; a live model turn never does. */
 const REPLAY_COLLAPSE_MS = 1_000;
 
-type FooterSlot = "copy" | "model" | "clock" | "duration";
+type FooterSlot = "copy" | "fork" | "model" | "clock" | "duration";
 export interface FooterFit { model: boolean; clock: boolean }
 
 /**
  * Which items one line holds, given each item's width (absent when not drawn)
  * and the row's. The clock goes first, then the model name: both stay in the
- * long-press details. Copy and the elapsed time always stay.
+ * long-press details. Copy, Fork and the elapsed time always stay.
  */
 export function fitOneLine(widths: Partial<Record<FooterSlot, number>>, row: number, gap: number): FooterFit {
   const span = (slots: readonly FooterSlot[]) => {
@@ -230,8 +257,8 @@ export function fitOneLine(widths: Partial<Record<FooterSlot, number>>, row: num
   };
   // Half a point of rounding must not drop an item that fits.
   const fits = (slots: readonly FooterSlot[]) => span(slots) <= row + 0.5;
-  if (fits(["copy", "model", "clock", "duration"])) return { model: true, clock: true };
-  if (fits(["copy", "model", "duration"])) return { model: true, clock: false };
+  if (fits(["copy", "fork", "model", "clock", "duration"])) return { model: true, clock: true };
+  if (fits(["copy", "fork", "model", "duration"])) return { model: true, clock: false };
   return { model: false, clock: false };
 }
 
@@ -248,7 +275,7 @@ function useOneLineFit(compact: boolean, hasModel: boolean, hasDuration: boolean
       const width = event.nativeEvent.layout.width;
       setWidths((previous) => previous[name] === width ? previous : { ...previous, [name]: width });
     };
-    return { row: slot("row"), copy: slot("copy"), model: slot("model"), clock: slot("clock"), duration: slot("duration") };
+    return { row: slot("row"), copy: slot("copy"), fork: slot("fork"), model: slot("model"), clock: slot("clock"), duration: slot("duration") };
   }, []);
   const { row, model, duration, ...rest } = widths;
   const fit = compact && row ? fitOneLine({ ...rest, ...(hasModel ? { model } : {}), ...(hasDuration ? { duration } : {}) },

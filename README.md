@@ -684,7 +684,9 @@ only their whole names, so `github` and `timeline` stay out.
   mark, model, thinking level and observed duration when available. Hover or long-press it for a
   **Turn details** table: agent, model, thinking level, start, end, elapsed time and input, cached
   and output tokens. The model name copies when pressed and confirms with a toast; completed-turn
-  footers remain during a later run. Turn **Plugin markdown for replies** off to restore Paseo's
+  footers remain during a later run. The footer also carries Paseo's own Fork menu on a host that
+  exposes it to plugins ([getpaseo/paseo#7462](https://github.com/getpaseo/paseo/pull/7462), not
+  yet released); on hosts without it, turn **Plugin markdown for replies** off to restore Paseo's
   full footer, including its Fork action.
 - Every local image in a reply is drawn, not only the first.
 - Turn **Plugin markdown for replies** off to hand replies back to Paseo, which draws mermaid
@@ -1096,7 +1098,8 @@ for. Upstream states are as of the same date.
 | --- | --- | --- |
 | Open a pressed file in Paseo's file panel. Plugins get no navigation to a file; 0.13 lets a plugin add a file viewer, but still not open a file. | Desktop opens it in its default app or reveals it in Finder or Explorer; touch copies the path ([Opening files](#opening-files)). | [getpaseo/paseo#7318](https://github.com/getpaseo/paseo/pull/7318), open |
 | Show the images pasted into a prompt. Paseo strips them from the item a plugin receives. | **Enhanced prompt bubble** is off by default, so Paseo keeps the prompt and its images; when on, a prompt with an attachment the plugin cannot draw stays with Paseo. | [#6736](https://github.com/getpaseo/paseo/pull/6736), open draft |
-| Offer Paseo's rewind menu on the plugin's prompt bubble, or its Fork action on the plugin's reply footer. A plugin replaces a row whole and cannot borrow the host's menus. | Turn **Enhanced prompt bubble** off for rewind, **Plugin markdown for replies** off for Fork. | [#6677](https://github.com/getpaseo/paseo/pull/6677) (rewind), [#7462](https://github.com/getpaseo/paseo/pull/7462) (fork), open |
+| Offer Paseo's rewind menu on the plugin's prompt bubble. A plugin replaces a row whole and cannot borrow the host's menus. | Turn **Enhanced prompt bubble** off for rewind. | [#6677](https://github.com/getpaseo/paseo/pull/6677), open |
+| Offer Paseo's Fork action before hosts expose it. The plugin footer now renders the host's own `ForkMenu` where a host supplies it; no released host does yet. | Turn **Plugin markdown for replies** off for Fork on current hosts. | [#7462](https://github.com/getpaseo/paseo/pull/7462), open |
 | Let Paseo's Ctrl/Cmd+F reveal a row the plugin drew. | The plugin's own find bar, over loaded messages ([Finding text](#finding-text)). | nothing filed |
 | Space its rows like Paseo's native tool rows. Paseo puts a 16pt gap under each plugin row. | **Tight rows** and **Tight reply** take most of it back where it is safe. | [#6602](https://github.com/getpaseo/paseo/pull/6602), open |
 | Follow a font change in Paseo's Appearance settings live. Paseo does not share its font settings with plugins. | Web and desktop read the font Paseo saved on that computer; iOS and Android use the system monospace at 12px under Follow Paseo. | not proposed upstream yet |
