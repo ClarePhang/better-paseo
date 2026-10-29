@@ -70,12 +70,22 @@ export interface CompletedTurnFooter {
   completedAt: number;
   startedAt: number | null;
   durationMs: number | null;
+  /**
+   * Where the turn's final reply sits on the daemon's timeline: the fork
+   * context's boundary, so the fork keeps this turn and drops the rest.
+   * Null when the epoch is unknown (a caller that did not pass one).
+   */
+  boundary: { epoch: string; seq: number } | null;
+  /** The reply's provider message ID, the boundary a cursor cannot express. */
+  messageId: string | null;
 }
 
 export interface TurnFooterOptions {
   marks?: TurnMarks;
   /** The entries begin at the agent's first item, so the first turn starts there. */
   fromStart?: boolean;
+  /** The loaded pages' epoch, naming every entry's `seqStart`/`seqEnd`. */
+  epoch?: string;
 }
 
 /**
@@ -89,7 +99,7 @@ export function completedTurnFooters(
   entries: readonly Entry[],
   running: boolean,
   activeTurnId: string | null,
-  { marks, fromStart = false }: TurnFooterOptions = {},
+  { marks, fromStart = false, epoch }: TurnFooterOptions = {},
 ): CompletedTurnFooter[] {
   const result: CompletedTurnFooter[] = [];
   const identities = new Map<number, Map<string, number>>();
@@ -126,9 +136,12 @@ export function completedTurnFooters(
       startedAt = recorded ?? (firstAt < completedAt ? firstAt : NaN);
     }
     const duration = completedAt - startedAt;
+    const messageId = reply.item.type === "assistant_message" ? reply.item.messageId ?? null : null;
     result.push({ ...(turnId ? { turnId } : {}), at, text: reply.item.text, completedAt,
       startedAt: Number.isFinite(duration) && duration >= 0 ? startedAt : null,
-      durationMs: Number.isFinite(duration) && duration >= 0 ? duration : null });
+      durationMs: Number.isFinite(duration) && duration >= 0 ? duration : null,
+      boundary: epoch && Number.isFinite(reply.seqEnd) ? { epoch, seq: reply.seqEnd } : null,
+      messageId });
   };
   for (let index = 1; index < entries.length; index++) {
     if (startsTurn(entries[index - 1]!, entries[index]!, marks)) {

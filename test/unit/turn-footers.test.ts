@@ -46,7 +46,7 @@ describe("completed turn footers", () => {
   it("excludes system envelopes and still uses the turn's final event for timing", () => {
     const rows = [prompt(1), reply(2, "answer"), entry({ type: "reasoning", text: "later" }, 3),
       reply(4, "<system-notice>Job finished</system-notice>")];
-    expect(completedTurnFooters(rows, false, null)).toEqual([{ at: 2000, text: "answer", startedAt: 1000, completedAt: 4000, durationMs: 3000 }]);
+    expect(completedTurnFooters(rows, false, null)).toEqual([{ at: 2000, text: "answer", startedAt: 1000, completedAt: 4000, durationMs: 3000, boundary: null, messageId: null }]);
   });
 
   it("retains prompt boundaries when canonical turn IDs are unavailable", () => {
@@ -477,5 +477,35 @@ describe("turn footer timing after a reload", () => {
       await store.refresh();
       expect(store.get(15000, "notified")).toMatchObject({ startedAt: 10000, durationMs: 5000 });
     } finally { stop(); }
+  });
+});
+
+describe("fork boundaries", () => {
+  it("pins each turn's boundary to its final reply's sequence", () => {
+    const rows = completedTurnFooters(turns(), false, null, { epoch: "e1" });
+    expect(rows.map((row) => row.boundary)).toEqual([{ epoch: "e1", seq: 3 }, { epoch: "e1", seq: 5 }]);
+  });
+
+  it("carries the reply's message ID as the fallback boundary", () => {
+    const rows = [prompt(1, "one"),
+      entry({ type: "assistant_message", text: "final", messageId: "m1" } as TimelineEntry["item"], 2, 2000, "one")];
+    const built = completedTurnFooters(rows, false, null, { epoch: "e1" });
+    expect(built[0]!.boundary).toEqual({ epoch: "e1", seq: 2 });
+    expect(built[0]!.messageId).toBe("m1");
+  });
+
+  it("stores the boundary through the live store", async () => {
+    const { store } = setup();
+    store.setRunning(false);
+    const stop = store.retain(3000, "first");
+    try {
+      await store.refresh();
+      expect(store.get(3000, "first")?.boundary).toEqual({ epoch: "e", seq: 3 });
+    } finally { stop(); }
+  });
+
+  it("leaves the boundary null without an epoch", () => {
+    expect(completedTurnFooters(turns(), false, null).every((row) => row.boundary === null && row.messageId === null))
+      .toBe(true);
   });
 });

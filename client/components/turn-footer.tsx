@@ -62,9 +62,14 @@ interface AssistantFooterProps {
   tokens: ExtendedThemeTokens;
   /** `layout.compact`: a 44pt touch target for Copy. */
   compact?: boolean;
+  /**
+   * The plugin's own fork sheet, drawn when the turn has a fork boundary and
+   * the host injects no `ForkMenu` of its own. Rendered beside Copy.
+   */
+  fork?: React.ReactNode;
 }
 
-export function AssistantFooter({ text, at, agentName, modelId, modelName, thinkingLabel, durationMs, startedAt, usage, tokens, compact = false }: AssistantFooterProps) {
+export function AssistantFooter({ text, at, agentName, modelId, modelName, thinkingLabel, durationMs, startedAt, usage, tokens, compact = false, fork = null }: AssistantFooterProps) {
   // The shared copy path (plan §3.8): a check for 1.2 s on success, a toast
   // on failure, and no timer left running after unmount.
   const { copied, copy } = useCopy();
@@ -88,8 +93,8 @@ export function AssistantFooter({ text, at, agentName, modelId, modelName, think
   const { fit, measure } = useOneLineFit(compact, Boolean(modelName), visibleDurationMs != null);
   // The host's Fork for this turn. Read per render: the injected UI module is
   // a plain namespace, so a host without the export answers undefined and the
-  // footer draws none.
-  const ForkMenu = typeof hostUi.ForkMenu === "function" ? hostUi.ForkMenu : undefined;
+  // footer falls back to the plugin's own fork sheet.
+  const HostForkMenu = typeof hostUi.ForkMenu === "function" ? hostUi.ForkMenu : undefined;
   const details = <FooterDetails agentName={agentName} modelId={modelId} modelName={modelName} thinkingLabel={thinkingLabel}
     startedAt={startedAt} completedAt={at.getTime()} durationMs={visibleDurationMs} usage={usage} tokens={tokens} />;
   const copyModel = useCallback(() => {
@@ -178,13 +183,16 @@ export function AssistantFooter({ text, at, agentName, modelId, modelName, think
           />
           <Text style={styles.copyLabel}>{toolbarLabel("Copy", language)}</Text>
         </ToolbarItem>
-        {ForkMenu ? (
+        {HostForkMenu ? (
           // The host owns the whole workflow: eligibility, the original
           // assistant's boundary, the draft and its navigation. The menu draws
           // nothing itself on an ineligible row or a host without the export.
           <View onLayout={compact ? measure.fork : undefined}>
-            <ForkMenu />
+            <HostForkMenu />
           </View>
+        ) : fork ? (
+          // No host menu: the plugin's own sheet, over the daemon's fork RPC.
+          <View onLayout={compact ? measure.fork : undefined}>{fork}</View>
         ) : null}
         {modelName && fit.model ? (
           <ToolbarItem

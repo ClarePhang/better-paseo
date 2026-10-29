@@ -7,10 +7,15 @@ import "./helpers/quiet-renderer";
 import { timelineEntry as entry, timelinePage as page, type TimelineEntry, type TimelinePage } from "./helpers/turn-timeline";
 
 const runtime = vi.hoisted(() => ({
-  agent: { status: "idle", cwd: "/workspace", provider: "codex", model: "sol", thinkingOptionId: "medium" },
+  agent: { status: "idle", cwd: "/workspace", provider: "codex", model: "sol", thinkingOptionId: "medium",
+    currentModeId: "code", workspaceId: "ws-1", title: "Source agent" },
   listeners: new Set<() => void>(),
   api: {} as unknown,
   copyText: vi.fn(async (_text: string) => {}),
+  /** The RPC call a test wants `useRpc` to hand out; null answers null. */
+  rpc: null as ((input: unknown) => Promise<unknown>) | null,
+  toasts: [] as string[],
+  toastErrors: [] as string[],
 }));
 
 vi.mock("react-native", () => import("./helpers/rn-mock"));
@@ -20,7 +25,12 @@ vi.mock("@getpaseo/plugin/client", () => ({
     () => selector(runtime.agent),
   ),
   usePaseo: () => runtime.api,
-  useRpc: () => () => Promise.resolve(null),
+  // Two contracts flow through this mock: the footer's turn-usage read and
+  // the fork sheet's create. Route by name; unknown ones answer empty.
+  useRpc: (contract: { name?: string }) => {
+    if (contract?.name === "fork.create") return runtime.rpc ?? (async () => null);
+    return async () => ({ turns: [] });
+  },
   useWorkspace: () => null,
   useSettings: () => ({ data: undefined, status: "loading" }),
 }));
@@ -29,14 +39,19 @@ vi.mock("@getpaseo/plugin/client/react-native", async () => {
   return { Icon: (props: Record<string, unknown>) => React.createElement("Icon", props),
     TextInput: rn.TextInput, ScrollView: rn.ScrollView, FlatList: rn.ScrollView, Modal: rn.View,
     useRevealedText: (text: string) => text, copyText: runtime.copyText,
-    useToast: () => ({ show() {}, error() {} }) };
+    useToast: () => ({ show: (message: string) => { runtime.toasts.push(message); },
+      error: (message: string) => { runtime.toastErrors.push(message); } }) };
 });
 // The host injects this module's implementations; the fork test swaps the menu
 // in through a getter, which the footer's per-render read follows.
 const forkHost = vi.hoisted(() => ({ ForkMenu: null as React.ComponentType | null }));
-vi.mock("@getpaseo/plugin/client/ui", () => ({
-  get ForkMenu() { return forkHost.ForkMenu ?? undefined; },
-}));
+vi.mock("@getpaseo/plugin/client/ui", async () => {
+  const rn = await import("./helpers/rn-mock");
+  return {
+    get ForkMenu() { return forkHost.ForkMenu ?? undefined; },
+    TextInput: rn.TextInput,
+  };
+});
 vi.mock("../../client/components/hub-live", () => ({ TimelineTailHub: () => null }));
 vi.mock("../../client/state/preference-sync-slot", () => ({ PreferenceSyncSlot: () => null }));
 vi.mock("../../client/components/selection-actions", () => ({ useSelectionActions: () => {} }));
@@ -58,7 +73,14 @@ const theme = { colors: { surface0: "#fff", surface1: "#eee", surface2: "#ddd", 
 const catalog: PaseoProviderModelsResult = { provider: "codex", fetchedAt: "now", requestId: "r",
   models: [{ provider: "codex", id: "sol", label: "GPT-6.1-Sol", thinkingOptions: [{ id: "medium", label: "Medium" }] }] };
 
-beforeEach(() => { vi.clearAllMocks(); runtime.agent.status = "idle"; forkHost.ForkMenu = null; });
+beforeEach(() => {
+  vi.clearAllMocks();
+  runtime.agent.status = "idle";
+  forkHost.ForkMenu = null;
+  runtime.rpc = null;
+  runtime.toasts.length = 0;
+  runtime.toastErrors.length = 0;
+});
 afterEach(() => { expect(runtime.listeners.size).toBe(0); });
 
 describe.each(["web", "ios"] as const)("completed-turn toolbar on %s", (platform) => {
@@ -317,6 +339,71 @@ describe("host fork menu", () => {
     try {
       const footer = renderer.root.findByType(AssistantFooter);
       expect(footer.findAllByProps({ testID: "host-fork-menu" })).toHaveLength(0);
+      expect(footer.findByProps({ accessibilityLabel: "Copy reply" })).toBeTruthy();
+    } finally { act(() => renderer.unmount()); }
+  });
+
+  it("forks into this workspace in one press: history attached, standby note as the first message", async () => {
+    const forkRpc = vi.fn(async (_input: unknown) => ({ agentId: "agent-new", workspaceId: "ws-1", error: null }));
+    runtime.rpc = forkRpc;
+    const { renderer } = await renderCompletedRow();
+    try {
+      const footer = renderer.root.findByType(AssistantFooter);
+      await act(async () => footer.findByProps({ accessibilityLabel: "Fork this turn" }).props.onPress());
+      await act(async () => footer.findByProps({ accessibilityLabel: "Fork (this workspace)" }).props.onPress());
+      expect(forkRpc).toHaveBeenCalledTimes(1);
+      const sent = forkRpc.mock.calls[0]![0] as Record<string, unknown>;
+      expect(sent).toMatchObject({
+        agentId: "fork",
+        boundary: { epoch: "e", seq: 2 },
+        messageId: null,
+        target: "workspace",
+        source: {
+          provider: "codex", cwd: "/workspace", model: "sol", thinkingOptionId: "medium",
+          modeId: "code", featureValues: null, workspaceId: "ws-1", title: "Source agent",
+        },
+      });
+      // The standby note closes the imported turn; the reader writes after opening the fork.
+      expect(String(sent.text)).toContain("Ready.");
+      expect(runtime.toasts).toHaveLength(1);
+      // The menu closed on pick.
+      expect(footer.findAllByProps({ accessibilityLabel: "Fork (this workspace)" })).toHaveLength(0);
+    } finally { act(() => renderer.unmount()); }
+  });
+
+  it("forks into a new workspace when that target is picked", async () => {
+    const forkRpc = vi.fn(async (_input: unknown) => ({ agentId: "agent-new", workspaceId: "wks-new", error: null }));
+    runtime.rpc = forkRpc;
+    const { renderer } = await renderCompletedRow();
+    try {
+      const footer = renderer.root.findByType(AssistantFooter);
+      await act(async () => footer.findByProps({ accessibilityLabel: "Fork this turn" }).props.onPress());
+      await act(async () => footer.findByProps({ accessibilityLabel: "Fork to a new workspace" }).props.onPress());
+      expect(forkRpc).toHaveBeenCalledTimes(1);
+      expect((forkRpc.mock.calls[0]![0] as { target: string }).target).toBe("new-workspace");
+      expect(runtime.toasts).toHaveLength(1);
+    } finally { act(() => renderer.unmount()); }
+  });
+
+  it("reports a failed fork through the error toast and keeps the trigger", async () => {
+    runtime.rpc = vi.fn(async () => ({ agentId: null, workspaceId: null, error: "provider offline" }));
+    const { renderer } = await renderCompletedRow();
+    try {
+      const footer = renderer.root.findByType(AssistantFooter);
+      await act(async () => footer.findByProps({ accessibilityLabel: "Fork this turn" }).props.onPress());
+      await act(async () => footer.findByProps({ accessibilityLabel: "Fork (this workspace)" }).props.onPress());
+      expect(runtime.toastErrors).toEqual(["provider offline"]);
+      // The trigger stays for a retry.
+      expect(footer.findByProps({ accessibilityLabel: "Fork this turn" })).toBeTruthy();
+    } finally { act(() => renderer.unmount()); }
+  });
+
+  it("hides the plugin fork when the agent snapshot names no provider", async () => {
+    runtime.agent.provider = "";
+    const { renderer } = await renderCompletedRow();
+    try {
+      const footer = renderer.root.findByType(AssistantFooter);
+      expect(footer.findAllByProps({ accessibilityLabel: "Fork this turn" })).toHaveLength(0);
       expect(footer.findByProps({ accessibilityLabel: "Copy reply" })).toBeTruthy();
     } finally { act(() => renderer.unmount()); }
   });

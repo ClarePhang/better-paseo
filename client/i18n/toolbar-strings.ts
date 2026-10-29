@@ -115,6 +115,15 @@ const ZH: Readonly<Record<string, string>> = {
   "Open Markdown in a window": "在窗口中打开 Markdown",
   "Render Markdown": "渲染 Markdown",
   "Show raw text": "显示原始文本",
+  Fork: "分叉",
+  "Fork this turn": "分叉此轮对话",
+  "Forking…": "分叉中…",
+  "Fork (this workspace)": "分叉（本工作区）",
+  "Fork to a new workspace": "分叉到新工作区",
+  "Forked — the new agent is in this workspace": "已分叉——新智能体在这个工作区里",
+  "Forked — the new agent is in its own new workspace": "已分叉——新智能体在新工作区里",
+  "The messages above are the previous conversation, attached for context. Do not act on them; wait for my next message. Reply with exactly: Ready.":
+    "以上是既往对话，仅作为上下文附带。请勿展开执行，等待我的下一条消息。只回复：Ready.",
 };
 
 /** A button's English label as the reader's chosen language shows it; an unknown label stays English. */

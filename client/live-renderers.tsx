@@ -23,6 +23,7 @@ import { useSelectionActions } from "./components/selection-actions";
 import { TurnUsageRow, type TurnUsage } from "./components/user-message";
 import { NoticeCallout } from "./components/notice-callout";
 import { useEnhancerPreferences } from "./preferences";
+import { ReplyForkSheet } from "./components/reply-fork";
 import { PreferenceSyncSlot } from "./state/preference-sync-slot";
 import { useIsLatestPrompt } from "./state/latest-prompt";
 import { useTurnFooter } from "./state/turn-footers";
@@ -656,10 +657,11 @@ const TurnFooter = memo(function TurnFooter({
   const timing = useTurnFooter(paseo, agentId, at.getTime(), text, running, streaming);
   if (!timing) return null;
   return <CompletedReplyFooter agentId={agentId} text={text} at={new Date(timing.completedAt)} tokens={tokens}
-    compact={compact} durationMs={timing.durationMs} startedAt={timing.startedAt} usage={timing.usage} />;
+    compact={compact} durationMs={timing.durationMs} startedAt={timing.startedAt} usage={timing.usage}
+    boundary={timing.boundary} messageId={timing.messageId} />;
 });
 
-function CompletedReplyFooter({ agentId, text, at, tokens, compact, durationMs, startedAt, usage }: {
+function CompletedReplyFooter({ agentId, text, at, tokens, compact, durationMs, startedAt, usage, boundary, messageId }: {
   agentId: string;
   text: string;
   at: Date;
@@ -668,16 +670,42 @@ function CompletedReplyFooter({ agentId, text, at, tokens, compact, durationMs, 
   durationMs: number | null;
   startedAt: number | null;
   usage?: TurnUsage;
+  boundary: { epoch: string; seq: number } | null;
+  messageId: string | null;
 }) {
   const agentName = useAgent(agentId, (agent) => agent.provider);
   const modelId = useAgent(agentId, (agent) => agent.model);
   const thinkingOptionId = useAgent(agentId, (agent) => agent.thinkingOptionId);
   const cwd = useAgent(agentId, (agent) => agent.cwd);
+  const workspaceId = useAgent(agentId, (agent) => agent.workspaceId);
+  const title = useAgent(agentId, (agent) => agent.title);
+  const modeId = useAgent(agentId, (agent) => agent.currentModeId);
   const paseo = usePaseo();
   const model = useFooterModel(paseo, agentName, modelId, thinkingOptionId, cwd);
+  const language = useEnhancerPreferences().language;
+  // The turn needs a boundary the daemon's fork context can pin, and the
+  // snapshot must name a provider and directory; without any of them the
+  // trigger hides, as the host's footer does without a boundary.
+  const fork = agentName && cwd && (boundary || messageId)
+    ? <ReplyForkSheet tokens={tokens} compact={compact} language={language}
+      request={{
+        agentId,
+        boundary,
+        messageId,
+        source: {
+          provider: agentName, cwd,
+          model: modelId ?? null,
+          thinkingOptionId: thinkingOptionId ?? null,
+          modeId,
+          featureValues: null,
+          workspaceId,
+          title,
+        },
+      }} />
+    : null;
   return <AssistantFooter text={text} at={at} agentName={agentName} modelId={modelId} modelName={model.modelName}
     thinkingLabel={model.thinkingLabel}
-    durationMs={durationMs} startedAt={startedAt} usage={usage} tokens={tokens} compact={compact} />;
+    durationMs={durationMs} startedAt={startedAt} usage={usage} tokens={tokens} compact={compact} fork={fork} />;
 }
 
 /**
